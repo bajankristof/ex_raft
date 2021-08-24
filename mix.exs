@@ -10,7 +10,8 @@ defmodule ExRaft.MixProject do
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      source_url: "https://github.com/bajankristof/ex_raft"
+      source_url: "https://github.com/bajankristof/ex_raft",
+      package: package()
     ]
   end
 
@@ -27,6 +28,13 @@ defmodule ExRaft.MixProject do
       {:gen_state_machine, "~> 3.0"},
       {:ex_doc, "~> 0.25.1", only: :dev, runtime: false},
       {:meck, "~> 0.9.2", only: :test}
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => "https://github.com/bajankristof/ex_raft"}
     ]
   end
 end
