@@ -100,8 +100,6 @@ defmodule ExRaft.Server do
     do: :keep_state_and_data
 
   defp do_init(ctx) do
-    Process.flag(:trap_exit, true)
-
     cond do
       Context.is_single_server(ctx) -> {:ok, :leader, ctx}
       Context.is_leader(ctx) -> {:ok, :leader, ctx}

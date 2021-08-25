@@ -11,7 +11,11 @@ defmodule ExRaftTest do
     quote bind_quoted: [state_machine: state_machine] do
       :meck.new(state_machine, [:non_strict])
 
-      :meck.expect(state_machine, :init, fn _ -> {:ok, %{}} end)
+      :meck.expect(state_machine, :init, fn _ ->
+        Process.flag(:trap_exit, true)
+        {:ok, %{}}
+      end)
+
       :meck.expect(state_machine, :transition, fn _, _ -> :ok end)
       :meck.expect(state_machine, :command?, fn command, _ -> match?({:put, _, _}, command) end)
       :meck.expect(state_machine, :handle_read, fn key, state -> Map.get(state, key) end)
@@ -30,7 +34,7 @@ defmodule ExRaftTest do
     {state_machine, _} = __ENV__.function
     setup_mocks(state_machine)
 
-    {:ok, _} = ExRaft.start_server(state_machine, name: state_machine)
+    {:ok, _} = start_server(state_machine, name: state_machine)
     assert :meck.num_calls(state_machine, :init, :_) === 1
     assert ExRaft.await_leader(state_machine, @etmo) === {state_machine, node()}
     assert ExRaft.trigger_election(state_machine, @wtmo) === :ok
@@ -71,8 +75,8 @@ defmodule ExRaftTest do
     |> Enum.each(fn {{name, _}, index} ->
       {:ok, _} =
         if index === 0,
-          do: ExRaft.start_server(state_machine, name: name, initial_config: config),
-          else: ExRaft.start_server(state_machine, name: name, min_majority: 2)
+          do: start_server(state_machine, name: name, initial_config: config),
+          else: start_server(state_machine, name: name, min_majority: 2)
     end)
 
     assert ExRaft.trigger_election(init_leader, @wtmo) === :ok
@@ -122,8 +126,8 @@ defmodule ExRaftTest do
     |> Enum.each(fn {{name, _}, index} ->
       {:ok, _} =
         if index === 0,
-          do: ExRaft.start_server(state_machine, name: name),
-          else: ExRaft.start_server(state_machine, name: name, min_majority: 2)
+          do: start_server(state_machine, name: name),
+          else: start_server(state_machine, name: name, min_majority: 2)
     end)
 
     # unchanged config should return quickly
@@ -147,4 +151,8 @@ defmodule ExRaftTest do
 
     :meck.unload(state_machine)
   end
+
+  defp start_server(state_machine, options),
+    do: ExRaft.start_server(state_machine, [{:debug, true} | options])
+    # do: ExRaft.start_server(state_machine, options)
 end

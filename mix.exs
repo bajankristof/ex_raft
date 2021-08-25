@@ -1,17 +1,25 @@
 defmodule ExRaft.MixProject do
   use Mix.Project
 
+  @version "0.1.1"
+  @source_url "https://github.com/bajankristof/ex_raft"
+
   def project do
     [
       app: :ex_raft,
-      version: "0.1.0",
+      version: @version,
       name: "ExRaft",
       description: "An Elixir implementation of the raft consensus protocol.",
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      source_url: "https://github.com/bajankristof/ex_raft",
-      package: package()
+      source_url: @source_url,
+      package: package(),
+      docs: [
+        main: "readme",
+        extras: ["README.md"],
+        source_url: @source_url
+      ]
     ]
   end
 
