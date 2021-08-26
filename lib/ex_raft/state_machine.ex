@@ -28,7 +28,7 @@ defmodule ExRaft.StateMachine do
 
         @impl true
         def handle_read(key, state) do
-          Map.get(state, key)
+          {:reply, Map.get(state, key)}
         end
       end
 
@@ -92,11 +92,11 @@ defmodule ExRaft.StateMachine do
         def start_link(opts),
           do: ExRaft.start_server(__MODULE__, @init_state, opts)
 
-        def put(server, key, value, timeout \\\\ nil),
-          do: ExRaft.write(server, {:put, key, value}, timeout)
+        def put(server, key, value),
+          do: ExRaft.write(server, {:put, key, value})
 
-        def get(server, key, timeout \\\\ nil),
-          do: ExRaft.read(server, key, timeout)
+        def get(server, key),
+          do: ExRaft.read(server, key)
 
         @impl true
         def init(init_state) do
@@ -116,7 +116,7 @@ defmodule ExRaft.StateMachine do
 
         @impl true
         def handle_read(key, state) do
-          Map.get(state, key)
+          {:reply, Map.get(state, key)}
         end
       end
 
@@ -227,10 +227,13 @@ defmodule ExRaft.StateMachine do
   @doc """
   Invoked to handle queries from `ExRaft.read/3` and when enabled `ExRaft.read_dirty/3` calls.
 
-  The returned `reply` will be sent to the caller and the server will continue its loop.
+  Returning `{:reply, reply}` sends the response `reply` to the caller and continues the loop.
+
+  Returning `:noreply` does not send a response to the caller and continues the loop.
   """
   @doc since: "0.1.0"
-  @callback handle_read(query :: any(), state :: state()) :: reply()
+  @callback handle_read(query :: any(), state :: state()) ::
+              {:reply, reply()} | :noreply
 
   @doc """
   Invoked to handle configuration changes.

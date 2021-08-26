@@ -153,9 +153,14 @@ defmodule ExRaft.State.Follower do
 
   def call({:read_dirty, query}, from, ctx)
       when ctx.dirty_read === true do
-    reply = StateMachine.handle_read(ctx.state_machine, query)
-    GenStateMachine.reply(from, reply)
-    :keep_state_and_data
+    case StateMachine.handle_read(ctx.state_machine, query) do
+      {:reply, reply} ->
+        GenStateMachine.reply(from, reply)
+        :keep_state_and_data
+
+      :noreply ->
+        :keep_state_and_data
+    end
   end
 
   def call({command, _}, from, ctx)

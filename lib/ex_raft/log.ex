@@ -59,6 +59,11 @@ defmodule ExRaft.Log do
     |> extract_matches()
   end
 
+  def select_all(log) do
+    :ets.select(log, [{Entry.query(), [], [:"$_"]}])
+    |> extract_matches()
+  end
+
   def select_matching(_, nil),
     do: nil
 

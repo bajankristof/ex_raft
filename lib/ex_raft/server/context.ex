@@ -7,7 +7,7 @@ defmodule ExRaft.Server.Context do
             await_leader_queue: [],
             batch_size: 100,
             config: [],
-            config_proposal: nil,
+            config_change: nil,
             commit_index: 0,
             debug: false,
             dirty_read: false,
@@ -48,12 +48,16 @@ defmodule ExRaft.Server.Context do
     initial_config = [self | Keyword.get(options, :initial_config, [])]
     last_config_entry = Log.select_last(log, :config)
     config = (last_config_entry && last_config_entry.command) || initial_config
+    last_config_index = (last_config_entry && last_config_entry.index) || 0
+    commit_index = KeyValueStore.get(key_value_store, :commit_index, 0)
+    config_change = (last_config_index < commit_index && last_config_entry) || nil
 
     %__MODULE__{
       self: self,
       batch_size: Keyword.get(options, :batch_size, 100),
-      commit_index: KeyValueStore.get(key_value_store, :commit_index, 0),
+      commit_index: commit_index,
       config: :lists.usort(config),
+      config_change: config_change,
       debug: Keyword.get(options, :debug, false),
       dirty_read: Keyword.get(options, :dirty_read, true),
       heartbeat_timeout: Keyword.get(options, :heartbeat_timeout, 100),
@@ -192,14 +196,4 @@ defmodule ExRaft.Server.Context do
 
   def leader_exec(%__MODULE__{self: self, leader: self}, fun), do: fun.()
   def leader_exec(_, _), do: :ignore
-
-  def has_leader_commit?(%__MODULE__{commit_index: commit_index, log: log, term: term}) do
-    entry = Log.select_at(log, commit_index)
-    entry && entry.term === term
-  end
-
-  def has_unstable_config?(%__MODULE__{commit_index: commit_index, log: log}) do
-    entry = Log.select_last(log, :config)
-    entry && entry.index < commit_index
-  end
 end

@@ -6,6 +6,8 @@ defmodule ExRaft.Server do
   alias ExRaft.{Log, StateMachine}
   alias ExRaft.Server.{Context, Logger}
 
+  @syntax_colors [number: :yellow, atom: :cyan, string: :green, boolean: :magenta, nil: :magenta]
+
   defmacro state_handler(state) do
     quote do
       case unquote(state) do
@@ -22,13 +24,6 @@ defmodule ExRaft.Server do
     end
   end
 
-  defmacrop step_down?(entry, ctx) do
-    quote do
-      unquote(entry).type === :config &&
-        !Enum.member?(unquote(entry).command, unquote(ctx).self)
-    end
-  end
-
   def start_link(%{options: options} = init_state) do
     gen_state_machine_options = Keyword.take(options, [:name])
     GenStateMachine.start_link(__MODULE__, init_state, gen_state_machine_options)
@@ -42,7 +37,7 @@ defmodule ExRaft.Server do
 
   def apply(ctx) do
     Log.select_range(ctx.log, Context.commitable_range(ctx))
-    |> Enum.reduce(ctx, &handle_entry/2)
+    |> Enum.reduce(ctx, fn entry, acc -> apply_entry(acc, entry) end)
   end
 
   @impl true
@@ -52,6 +47,7 @@ defmodule ExRaft.Server do
         init_ctx
         |> Map.put(:state_machine, state_machine)
         |> Context.new()
+        |> apply()
         |> do_init()
 
       {:stop, reason} ->
@@ -81,9 +77,26 @@ defmodule ExRaft.Server do
     module.enter(prev_state, ctx)
   end
 
+  def handle_event({:call, from}, :state, state, _) do
+    GenStateMachine.reply(from, state)
+    :keep_state_and_data
+  end
+
   def handle_event({:call, from}, request, state, ctx) do
     module = state_handler(state)
     module.call(request, from, ctx)
+  end
+
+  def handle_event(:cast, {:inspect, :context}, _, ctx) do
+    IO.inspect(ctx, pretty: true, syntax_colors: @syntax_colors)
+    :keep_state_and_data
+  end
+
+  def handle_event(:cast, {:inspect, :log}, _, ctx) do
+    Log.select_all(ctx.log)
+    |> IO.inspect(pretty: true, syntax_colors: @syntax_colors)
+
+    :keep_state_and_data
   end
 
   def handle_event(:cast, request, state, ctx) do
@@ -107,25 +120,30 @@ defmodule ExRaft.Server do
     end
   end
 
-  defp handle_entry(%{ref: nil}, ctx),
-    do: ctx
-
-  defp handle_entry(entry, ctx) do
+  defp apply_entry(ctx, entry) do
     {reply, state_machine, side_effects} =
       if entry.type in [:config],
         do: StateMachine.handle_system_write(ctx.state_machine, entry.type, entry.command),
         else: StateMachine.handle_write(ctx.state_machine, entry.command)
 
     Context.leader_exec(ctx, fn ->
-      Enum.each(side_effects, &handle_side_effect/1)
-      GenStateMachine.reply(entry.ref, reply)
+      Enum.each(side_effects, &apply_side_effect/1)
+
+      if is_tuple(entry.ref),
+        do: GenStateMachine.reply(entry.ref, reply)
     end)
 
     %{ctx | state_machine: state_machine}
-    |> Map.put(:step_down, step_down?(entry, ctx))
+    |> apply_context_change(entry)
     |> Context.set_last_applied(entry.index)
   end
 
-  defp handle_side_effect({:mfa, {module, function, args}}),
+  defp apply_context_change(ctx, %{type: :config, command: config}),
+    do: %{ctx | config_change: nil, step_down: !Enum.member?(config, ctx.self)}
+
+  defp apply_context_change(ctx, _),
+    do: ctx
+
+  defp apply_side_effect({:mfa, {module, function, args}}),
     do: apply(module, function, args)
 end

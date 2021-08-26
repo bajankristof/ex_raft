@@ -18,7 +18,9 @@ defmodule ExRaftTest do
 
       :meck.expect(state_machine, :transition, fn _, _ -> :ok end)
       :meck.expect(state_machine, :command?, fn command, _ -> match?({:put, _, _}, command) end)
-      :meck.expect(state_machine, :handle_read, fn key, state -> Map.get(state, key) end)
+
+      :meck.expect(state_machine, :handle_read, fn key, state -> {:reply, Map.get(state, key)} end)
+
       :meck.expect(state_machine, :handle_system_write, fn _, _, state -> {:ok, state} end)
 
       :meck.expect(state_machine, :handle_write, fn {:put, key, value}, state ->
@@ -154,5 +156,4 @@ defmodule ExRaftTest do
 
   defp start_server(state_machine, options),
     do: ExRaft.start_server(state_machine, [{:debug, true} | options])
-    # do: ExRaft.start_server(state_machine, options)
 end

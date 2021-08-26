@@ -2,6 +2,81 @@ defmodule ExRaft do
   @moduledoc """
   `ExRaft` provides an Elixir implementation and an easy to use API
   for the raft consensus protocol.
+
+  ## Internals
+
+  ### Servers
+
+  When starting an `ExRaft` server, there are 2 processes spawned:
+
+    1. a `Supervisor` process that ensures that the logs are not
+      lost when the server crashes
+    2. the actual server process
+
+  Note that the `Supervisor` **will generate an additional atom**
+  to register itself (for more information, check out the
+  `ExRaft.start_server/3` function).
+
+  ### Timeouts
+
+  When calling `ExRaft.write/3`, `ExRaft.add_server/3` or
+  `ExRaft.remove_server/3`, you may experience timeouts.
+
+  This is most likely caused by the majority of the cluster not being available
+  to the leader.
+
+  **Note that even though the call may time out, once the majority comes back online
+  your command might still be applied, provided the rest of the cluster did not
+  advance their log in the meantime.**
+
+  ### Cluster membership changes
+
+  Dynamic cluster membership is supported with one-at-a-time changes to the 
+  configuration, but **as of now new servers are added without any sort of
+  catch-up mechanism or validation**
+  (these features will be present in a future release).
+
+  Servers can be added to- or removed from the cluster by making `ExRaft.add_server/3`
+  or `ExRaft.remove_server/3` calls to the leader.
+
+  ### Log compaction
+
+  As of now log compaction is not supported but is planned
+  to be implemented and released in the future.
+
+  ## Example
+
+      init_arg = [very_cool: true]
+      initial_config = [raft1: node(), raft2: node()]
+
+      # after starting these servers, they will time out and eventually elect a leader
+      # amongst themselves
+      {:ok, _} = ExRaft.start_server(YourStateMachine, init_arg, name: :raft1, initial_config: initial_config)
+      {:ok, _} = ExRaft.start_server(YourStateMachine, init_arg, name: :raft2, initial_config: initial_config)
+
+      # this server can never become leader unless its added to an existing cluster
+      # since it doesn't know of any other server but is required to achieve
+      # a minimum majority of 2 in elections and log replication
+      {:ok, _} = ExRaft.start_server(YourStateMachine, init_arg, name: :raft3, min_majority: 2)
+
+      # we could pick any server to await the leader
+      leader = ExRaft.await_leader(:raft1)
+      :ok = ExRaft.add_server(leader, :raft3)
+
+      # the success result of write/3 depends on the state machine
+      :ok = ExRaft.write(leader, :hello)
+
+      # making a write/3 call to a follower results in an error
+      follower = List.delete(initial_config, leader) |> List.first()
+      {:error, {:redirect, ^leader}} = ExRaft.write(follower, :hello)
+
+      # if we stop the active leader (or it crashes)
+      # the rest of the cluster will be able to recover
+      :ok = ExRaft.stop_server(leader)
+      :ok = ExRaft.trigger_election(:raft3)
+      new_leader = ExRaft.await_leader(:raft3)
+      true = Enum.member?([raft2: node(), raft3: node()], new_leader)
+
   """
   @moduledoc since: "0.1.0"
 
@@ -250,6 +325,26 @@ defmodule ExRaft do
   @spec leader(server :: server(), timeout :: timeout()) :: peer() | nil
   def leader(server, timeout \\ 1_000),
     do: ExRaft.Server.call(server, :leader, timeout)
+
+  @doc """
+  Makes a synchronous call to `server` to retrieve its state
+  and waits for its reply.
+  """
+  @doc since: "0.2.0"
+  @spec state(server :: server(), timeout :: timeout()) ::
+          :follower | :candidate | :leader
+  def state(server, timeout \\ 1_000),
+    do: ExRaft.Server.call(server, :state, timeout)
+
+  @doc """
+  Sends an asynchronous request to `server` to inspect and write
+  its context or log to the device.
+  """
+  @doc since: "0.2.0"
+  @spec inspect(server :: server(), flag :: :context | :log) :: :ok
+  def inspect(server, flag)
+      when is_atom(server) and flag in [:context, :log],
+      do: ExRaft.Server.cast(server, {:inspect, flag})
 
   @doc false
   @doc since: "0.1.0"

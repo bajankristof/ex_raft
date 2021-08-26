@@ -14,7 +14,7 @@ defmodule ExRaft.State.Leader do
     StateMachine.transition(ctx.state_machine, :leader)
     Enum.each(ctx.await_leader_queue, &GenStateMachine.reply(&1, ctx.self))
     entry = Log.insert_new(ctx.log, ctx.term, :config, ctx.config)
-    handle_log_change(%{ctx | await_leader_queue: [], last_entry: entry})
+    handle_log_change(%{ctx | await_leader_queue: [], config_change: :leader, last_entry: entry})
   end
 
   def exit(_, ctx) do
@@ -102,17 +102,17 @@ defmodule ExRaft.State.Leader do
   # | call |
   # ========
 
-  def call(:ping, from, _) do
-    GenStateMachine.reply(from, :pong)
-    :keep_state_and_data
-  end
-
   def call(request, from, ctx)
       when RPC.is_request(request) and ctx.term < request.term do
     Logger.debug("received higher term, stepping down", ctx)
 
     {:next_state, :follower, Context.set_term(ctx, request.term),
      [{:next_event, {:call, from}, request}]}
+  end
+
+  def call(:ping, from, _) do
+    GenStateMachine.reply(from, :pong)
+    :keep_state_and_data
   end
 
   def call(:await_leader, from, ctx) do
@@ -125,33 +125,43 @@ defmodule ExRaft.State.Leader do
     {:next_state, :candidate, ctx}
   end
 
-  def call({command, server}, from, ctx)
-      when command in [:add_server, :remove_server] do
-    member? = Enum.member?(ctx.config, server)
+  def call({:remove_server, server}, from, ctx)
+      when ctx.config === [server] do
+    GenStateMachine.reply(from, {:error, :last_server})
+    :keep_state_and_data
+  end
 
-    cond do
-      command === :add_server and member? ->
-        GenStateMachine.reply(from, :ok)
-        :keep_state_and_data
+  def call({command, _}, from, ctx)
+      when command in [:add_server, :remove_server] and
+             ctx.config_change === :leader do
+    GenStateMachine.reply(from, {:error, :unstable_leader})
+    :keep_state_and_data
+  end
 
-      command === :remove_server and not member? ->
-        GenStateMachine.reply(from, :ok)
-        :keep_state_and_data
+  def call({command, _}, from, ctx)
+      when command in [:add_server, :remove_server] and
+             not is_nil(ctx.config_change) do
+    GenStateMachine.reply(from, {:error, :unstable_config})
+    :keep_state_and_data
+  end
 
-      command === :remove_server and ctx.config === [server] ->
-        GenStateMachine.reply(from, {:error, :last_server})
-        :keep_state_and_data
+  def call({:add_server, server}, from, ctx) do
+    if Enum.member?(ctx.config, server) do
+      GenStateMachine.reply(from, :ok)
+      :keep_state_and_data
+    else
+      :lists.usort([server | ctx.config])
+      |> handle_config_change(from, ctx)
+    end
+  end
 
-      !Context.has_leader_commit?(ctx) ->
-        GenStateMachine.reply(from, {:error, :no_commit})
-        :keep_state_and_data
-
-      Context.has_unstable_config?(ctx) ->
-        GenStateMachine.reply(from, {:error, :unstable_config})
-        :keep_state_and_data
-
-      true ->
-        handle_config_change({command, server}, from, ctx)
+  def call({:remove_server, server}, from, ctx) do
+    if !Enum.member?(ctx.config, server) do
+      GenStateMachine.reply(from, :ok)
+      :keep_state_and_data
+    else
+      List.delete(ctx.config, server)
+      |> handle_config_change(from, ctx)
     end
   end
 
@@ -171,9 +181,14 @@ defmodule ExRaft.State.Leader do
 
   def call({command, query}, from, ctx)
       when command in [:read, :read_dirty] do
-    reply = StateMachine.handle_read(ctx.state_machine, query)
-    GenStateMachine.reply(from, reply)
-    :keep_state_and_data
+    case StateMachine.handle_read(ctx.state_machine, query) do
+      {:reply, reply} ->
+        GenStateMachine.reply(from, reply)
+        :keep_state_and_data
+
+      :noreply ->
+        :keep_state_and_data
+    end
   end
 
   def call(:leader, from, ctx) do
@@ -199,15 +214,10 @@ defmodule ExRaft.State.Leader do
     {:keep_state, Context.reset_heartbeat_timeout(ctx, 0)}
   end
 
-  defp handle_config_change({command, server}, from, ctx) do
-    config =
-      if command === :add_server,
-        do: :lists.usort([server | ctx.config]),
-        else: List.delete(ctx.config, server)
-
+  defp handle_config_change(config, from, ctx) do
     entry = Log.insert_new(ctx.log, ctx.term, :config, config, from)
 
-    %{ctx | last_entry: entry}
+    %{ctx | config_change: entry, last_entry: entry}
     |> Context.set_config(config)
     |> handle_log_change()
   end
