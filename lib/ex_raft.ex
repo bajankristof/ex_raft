@@ -103,7 +103,8 @@ defmodule ExRaft do
   """
   @typedoc since: "0.1.0"
   @type option() ::
-          {:debug, boolean()}
+          {:name, atom()}
+          | {:debug, boolean()}
           | {:dirty_read, boolean()}
           | {:initial_config, [peer()]}
           | {:min_majority, nil | non_neg_integer()}
@@ -179,8 +180,9 @@ defmodule ExRaft do
   @doc since: "0.1.0"
   @spec start_server(module :: module(), init_arg :: any(), options :: options()) ::
           Supervisor.on_start()
-  def start_server(module, init_arg, options),
-    do: ExRaft.Supervisor.start_link(module, init_arg, options)
+  def start_server(module, init_arg, options)
+      when is_atom(module) and is_list(options),
+      do: ExRaft.Supervisor.start_link(module, init_arg, options)
 
   @doc """
   Synchronously stops the server with the given `reason`.
@@ -238,7 +240,7 @@ defmodule ExRaft do
   """
   @doc since: "0.1.0"
   @spec add_server(server :: server(), new_server :: peer(), timeout :: timeout()) ::
-          :ok | {:error, reason :: any()}
+          :ok | {:error, reason :: atom() | {:redirect, peer()}}
   def add_server(server, {name, node} = new_server, timeout \\ 60_000)
       when is_atom(name) and is_atom(node),
       do: ExRaft.Server.call(server, {:add_server, new_server}, timeout)
@@ -262,7 +264,7 @@ defmodule ExRaft do
   """
   @doc since: "0.1.0"
   @spec remove_server(server :: server(), server_to_remove :: peer(), timeout :: timeout()) ::
-          :ok | any()
+          :ok | {:error, reason :: atom() | {:redirect, peer()}}
   def remove_server(server, {name, node} = server_to_remove, timeout \\ 60_000)
       when is_atom(name) and is_atom(node),
       do: ExRaft.Server.call(server, {:remove_server, server_to_remove}, timeout)
@@ -286,7 +288,8 @@ defmodule ExRaft do
 
   """
   @doc since: "0.1.0"
-  @spec write(server :: server(), command :: any(), timeout :: timeout()) :: any()
+  @spec write(server :: server(), command :: any(), timeout :: timeout()) ::
+          StateMachine.reply() | {:error, reason :: atom() | {:redirect, peer()}}
   def write(server, command, timeout \\ 60_000),
     do: ExRaft.Server.call(server, {:write, command}, timeout)
 
@@ -302,7 +305,8 @@ defmodule ExRaft do
   Otherwise if `server` is not leader, it returns the same error as `write/3`.
   """
   @doc since: "0.1.0"
-  @spec read(server :: server(), query :: any(), timeout :: timeout()) :: any()
+  @spec read(server :: server(), query :: any(), timeout :: timeout()) ::
+          StateMachine.reply() | {:error, reason :: atom() | {:redirect, peer()}}
   def read(server, query, timeout \\ 60_000),
     do: ExRaft.Server.call(server, {:read, query}, timeout)
 
@@ -313,7 +317,8 @@ defmodule ExRaft do
   If `:dirty_read` was set to `false`, `server` never replies.
   """
   @doc since: "0.1.0"
-  @spec read_dirty(server :: server(), query :: any(), timeout :: timeout()) :: any()
+  @spec read_dirty(server :: server(), query :: any(), timeout :: timeout()) ::
+          StateMachine.reply()
   def read_dirty(server, query, timeout \\ 60_000),
     do: ExRaft.Server.call(server, {:read_dirty, query}, timeout)
 
